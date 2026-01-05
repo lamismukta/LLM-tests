@@ -74,3 +74,6 @@ coverage.xml
 *.pb
 models/
 checkpoints/
+
+# Results directory (generated experiments)
+results/
