@@ -4,15 +4,13 @@ Job description:
 
 # 🚀 Founding Operator
 
-**Jack & Jill** · 📍 London, UK (Full-time, in-person)
-
 ## 🏢 About Us
 
-Jack & Jill is an AI recruitment startup building the infrastructure for the future labour market with two agentic products: Jack (AI career agent for candidates) and Jill (AI talent partner for companies). We've raised from top VCs, have tens of thousands of candidates using Jack, and are growing rapidly.
+The company is an AI recruitment startup building the infrastructure for the future labour market with two agentic products: An AI career agent for candidates and an AI talent partner for companies. We've raised from top VCs, have tens of thousands of candidates, and are growing rapidly.
 
 ## 💼 The Role
 
-- 🎯 Own the Jill (AI recruiter) customer experience post-sale, combining account management, customer success, data/analytics, and product management
+- 🎯 Own the AI recruiter customer experience post-sale, combining account management, customer success, data/analytics, and product management
 - 🔧 Diagnose problems, build v1 solutions manually, then automate and scale them
 - 🤝 Work directly with the CEO in the Founder's Office as a force multiplier across the company's highest-leverage challenges
 - ⚡ Mission will evolve rapidly as company needs change - expect to move between different areas of the business
