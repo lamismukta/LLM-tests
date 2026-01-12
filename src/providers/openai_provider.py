@@ -1,6 +1,5 @@
 """OpenAI LLM provider implementation."""
 import os
-from typing import Dict, Any
 from openai import AsyncOpenAI
 from .base import LLMProvider, LLMResponse
 
@@ -8,7 +7,7 @@ from .base import LLMProvider, LLMResponse
 class OpenAIProvider(LLMProvider):
     """OpenAI provider for GPT models."""
     
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.7, max_tokens: int = 2000):
+    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 1.0, max_tokens: int = 2000):
         super().__init__(model, temperature, max_tokens)
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -20,15 +19,28 @@ class OpenAIProvider(LLMProvider):
         temperature = kwargs.get("temperature", self.temperature)
         max_tokens = kwargs.get("max_tokens", self.max_tokens)
         
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        # GPT-5 models have different parameter requirements
+        is_gpt5 = self.model.startswith("gpt-5")
+        
+        create_params = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": "You are an expert CV analyst with deep knowledge of recruitment and talent assessment."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=temperature,
-            max_tokens=max_tokens
-        )
+        }
+        
+        # Use temperature for all models (GPT-5 only supports 1.0, but we set it explicitly for consistency)
+        # Note: GPT-5 will error if temperature != 1.0, so config should use 1.0 for fair comparison
+        create_params["temperature"] = temperature
+        
+        # Use appropriate parameter based on model version
+        if is_gpt5:
+            create_params["max_completion_tokens"] = max_tokens
+        else:
+            create_params["max_tokens"] = max_tokens
+        
+        response = await self.client.chat.completions.create(**create_params)
         
         return LLMResponse(
             content=response.choices[0].message.content,

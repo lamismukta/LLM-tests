@@ -12,7 +12,7 @@ echo "OPENAI_API_KEY=your_key_here" > .env
 
 ## 2. Run Your First Experiment
 
-### Quick Test (3 CVs, all pipelines, default model)
+### Quick Test (5 CVs, all pipelines, default models)
 ```bash
 python run_analysis.py --quick-test
 ```
