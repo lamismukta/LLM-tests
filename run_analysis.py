@@ -12,6 +12,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.providers.openai_provider import OpenAIProvider
+from src.providers.gemini_provider import GeminiProvider
+from src.providers.anthropic_provider import AnthropicProvider
 from src.pipelines.one_shot import OneShotPipeline
 from src.pipelines.chain_of_thought import ChainOfThoughtPipeline
 from src.pipelines.multi_layer import MultiLayerPipeline
@@ -33,6 +35,55 @@ def load_cv_data(data_path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
+def get_provider_for_model(model: str, config: Dict[str, Any]):
+    """Determine which provider to use for a given model."""
+    # Check each provider's model list
+    for provider_name, provider_config in config['llm_providers'].items():
+        if model in provider_config.get('models', []):
+            if provider_name == 'openai':
+                return OpenAIProvider(
+                    model=model,
+                    temperature=provider_config.get('temperature', 1.0),
+                    max_tokens=provider_config.get('max_tokens', 2000)
+                )
+            elif provider_name == 'gemini':
+                return GeminiProvider(
+                    model=model,
+                    temperature=provider_config.get('temperature', 1.0),
+                    max_tokens=provider_config.get('max_tokens', 2000)
+                )
+            elif provider_name == 'anthropic':
+                return AnthropicProvider(
+                    model=model,
+                    temperature=provider_config.get('temperature', 1.0),
+                    max_tokens=provider_config.get('max_tokens', 2000)
+                )
+
+    # Fallback: detect provider by model name prefix
+    model_lower = model.lower()
+    if model_lower.startswith('gemini'):
+        provider_config = config['llm_providers'].get('gemini', {})
+        return GeminiProvider(
+            model=model,
+            temperature=provider_config.get('temperature', 1.0),
+            max_tokens=provider_config.get('max_tokens', 2000)
+        )
+    elif model_lower.startswith('claude'):
+        provider_config = config['llm_providers'].get('anthropic', {})
+        return AnthropicProvider(
+            model=model,
+            temperature=provider_config.get('temperature', 1.0),
+            max_tokens=provider_config.get('max_tokens', 2000)
+        )
+
+    # Default to OpenAI if not found
+    return OpenAIProvider(
+        model=model,
+        temperature=config['llm_providers']['openai'].get('temperature', 1.0),
+        max_tokens=config['llm_providers']['openai'].get('max_tokens', 2000)
+    )
+
+
 async def run_experiment(
     config: Dict[str, Any],
     cv_data: List[Dict[str, Any]],
@@ -40,7 +91,8 @@ async def run_experiment(
     detailed_criteria: str,
     models: List[str] = None,
     pipelines: List[str] = None,
-    cv_ids: List[str] = None
+    cv_ids: List[str] = None,
+    providers: List[str] = None
 ) -> List[PipelineResult]:
     """Run a complete experiment across models and pipelines."""
     load_dotenv()
@@ -49,9 +101,23 @@ async def run_experiment(
     if cv_ids:
         cv_data = [cv for cv in cv_data if cv['id'] in cv_ids]
     
-    # Default to all models and pipelines if not specified
+    # Collect all models from all providers if not specified
     if models is None:
-        models = config['llm_providers']['openai']['models']
+        models = []
+        if providers is None:
+            # Include all providers
+            providers = list(config['llm_providers'].keys())
+        
+        for provider_name in providers:
+            if provider_name in config['llm_providers']:
+                models.extend(config['llm_providers'][provider_name].get('models', []))
+    elif providers is not None:
+        # Filter models by provider if both specified
+        provider_models = []
+        for provider_name in providers:
+            if provider_name in config['llm_providers']:
+                provider_models.extend(config['llm_providers'][provider_name].get('models', []))
+        models = [m for m in models if m in provider_models]
     
     if pipelines is None:
         pipelines = [name for name, settings in config['pipelines'].items() if settings.get('enabled', True)]
@@ -67,12 +133,12 @@ async def run_experiment(
     print(f"  Total pipeline runs: {total_tasks}\n")
     
     for model in models:
-        # Create provider for this model
-        provider = OpenAIProvider(
-            model=model,
-            temperature=config['llm_providers']['openai']['temperature'],
-            max_tokens=config['llm_providers']['openai']['max_tokens']
-        )
+        # Create provider for this model (auto-detect based on model name)
+        try:
+            provider = get_provider_for_model(model, config)
+        except Exception as e:
+            print(f"  ✗ Error creating provider for {model}: {e}")
+            continue
         
         for pipeline_name in pipelines:
             # Create pipeline
@@ -116,12 +182,15 @@ async def main():
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
     parser.add_argument("--data", default="data/cvs_sanitized.json", help="Path to sanitized CV data file")
     parser.add_argument("--models", nargs="+", help="Specific models to test (default: all in config)")
+    parser.add_argument("--providers", nargs="+", choices=["openai", "gemini", "anthropic"],
+                       help="Specific providers to test (default: all)")
     parser.add_argument("--pipelines", nargs="+", choices=["one_shot", "chain_of_thought", "multi_layer", "decomposed_algorithmic"],
                        help="Specific pipelines to run (default: all enabled)")
     parser.add_argument("--cv-ids", nargs="+", help="Specific CV IDs to analyze (default: all)")
     parser.add_argument("--experiment-name", help="Name for this experiment (default: auto-generated with timestamp)")
     parser.add_argument("--quick-test", action="store_true", help="Run quick test on C and D CVs (C1-C3, D1-D2)")
     parser.add_argument("--extended-test", action="store_true", help="Run extended test on A, B, C, and D CVs (A1-A3, B1-B2, C1-C3, D1-D2)")
+    parser.add_argument("--small-test", action="store_true", help="Run small test on 4 matched CVs (A1, A2, A3, B1)")
     
     args = parser.parse_args()
     
@@ -136,6 +205,25 @@ async def main():
     
     # Load CV data
     cv_data = load_cv_data(args.data)
+    
+    # Small test mode - filter for 4 matched CVs (A1, A2, A3, B1)
+    if args.small_test:
+        # Load mapping to find sanitized IDs for A1, A2, A3, B1
+        mapping_path = Path(__file__).parent / "data" / "cv_id_mapping.json"
+        with open(mapping_path, 'r', encoding='utf-8') as f:
+            mapping = json.load(f)
+        
+        # Find sanitized IDs for A1, A2, A3, B1 (4 matched CVs)
+        target_original_ids = ['A1', 'A2', 'A3', 'B1']
+        sanitized_ids = []
+        for sanitized_id, info in mapping.items():
+            if info['original_id'] in target_original_ids:
+                sanitized_ids.append(sanitized_id)
+        
+        # Filter CVs
+        cv_data = [cv for cv in cv_data if cv['id'] in sanitized_ids]
+        print(f"Running in small test mode (4 matched CVs: {len(cv_data)} CVs)")
+        print()
     
     # Quick test mode - filter for C and D CVs
     if args.quick_test:
@@ -187,7 +275,8 @@ async def main():
         detailed_criteria=detailed_criteria,
         models=args.models,
         pipelines=args.pipelines,
-        cv_ids=args.cv_ids
+        cv_ids=args.cv_ids,
+        providers=args.providers
     )
     
     if not results:

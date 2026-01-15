@@ -14,7 +14,8 @@ A modular framework for comparing different LLM models and analysis strategies w
 
 - **Ranking Output**: Each pipeline outputs rankings (1-4) for all candidates with names and reasoning
 
-- **Easy LLM Switching**: Abstract provider interface makes it simple to switch between LLM providers (currently OpenAI, easily extensible)
+- **Multiple LLM Providers**: Support for OpenAI (GPT-4, GPT-5), Google Gemini, and Anthropic (Claude) models
+- **Easy LLM Switching**: Abstract provider interface makes it simple to switch between LLM providers
 
 - **Comparison Framework**: Built-in tools to compare results across pipelines and models
 
@@ -29,7 +30,10 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 ```
 OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
+Note: You only need to set the API keys for providers you want to use.
 
 3. **Sanitize CV data** (first time only):
 ```bash
@@ -70,6 +74,16 @@ python run_analysis.py --extended-test --experiment-name extended_test
 Run specific models:
 ```bash
 python run_analysis.py --models gpt-4o-mini gpt-4o
+```
+
+Run specific providers:
+```bash
+python run_analysis.py --providers gemini anthropic
+```
+
+Combine providers and models:
+```bash
+python run_analysis.py --providers openai gemini --models gpt-4o gemini-1.5-pro
 ```
 
 Run specific pipelines:
