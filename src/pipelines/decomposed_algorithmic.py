@@ -1,5 +1,6 @@
 """Decomposed pipeline with algorithmic aggregation - shares criteria evaluation with multi_layer."""
 import json
+import asyncio
 from typing import Dict, Any, List
 from .base import Pipeline, PipelineResult, RankingResult
 
@@ -7,8 +8,8 @@ from .base import Pipeline, PipelineResult, RankingResult
 class DecomposedAlgorithmicPipeline(Pipeline):
     """Evaluates criteria separately (like multi_layer) but uses algorithmic aggregation instead of LLM synthesis."""
 
-    def __init__(self, llm_provider):
-        super().__init__(llm_provider, "decomposed_algorithmic")
+    def __init__(self, llm_provider, blind_mode: bool = False):
+        super().__init__(llm_provider, "decomposed_algorithmic", blind_mode)
 
     def _map_rating_to_score(self, rating: str) -> int:
         """Map qualitative rating to numeric score."""
@@ -62,116 +63,6 @@ class DecomposedAlgorithmicPipeline(Pipeline):
 
         return final_ranking, reasoning
 
-    async def _evaluate_criteria(self, cv: Dict[str, Any], job_ad: str, detailed_criteria: str) -> Dict[str, Any]:
-        """Evaluate each criterion separately - same as multi_layer Layer 1."""
-
-        cv_texts = [f"CV (ID: {cv['id']}):\n{cv['content']}\n"]
-        cv_block = "\n---\n\n".join(cv_texts)
-
-        criteria_evaluations = {}
-
-        criteria_list = [
-            ("Zero-to-One Operator", "zero_to_one"),
-            ("Technical T-Shape", "technical_t_shape"),
-            ("Recruitment Mastery", "recruitment_mastery")
-        ]
-
-        for criteria_name, criteria_key in criteria_list:
-            # Extract relevant section from detailed_criteria
-            criteria_section = self._extract_criteria_section(detailed_criteria, criteria_name)
-
-            criteria_prompt = f"""Evaluate this candidate against the "{criteria_name}" criteria.
-
-Job Description:
-{job_ad}
-
-Criteria Details:
-{criteria_section}
-
-Candidate to Evaluate:
-{cv_block}
-
-Evaluate their fit to this specific criteria and rate as: Excellent, Good, Weak, or Not a Fit.
-
-Provide your evaluation in JSON format:
-{{
-    "cv_id": "{cv['id']}",
-    "rating": "Excellent/Good/Weak/Not a Fit",
-    "evidence": "Specific evidence from CV supporting this rating"
-}}"""
-
-            criteria_response = await self.llm_provider.generate(criteria_prompt)
-
-            try:
-                content = criteria_response.content.strip()
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-
-                parsed = json.loads(content)
-                criteria_evaluations[criteria_key] = {
-                    "cv_id": cv['id'],
-                    "rating": parsed.get("rating", "Unknown"),
-                    "evidence": parsed.get("evidence", "")
-                }
-            except (json.JSONDecodeError, KeyError) as e:
-                criteria_evaluations[criteria_key] = {
-                    "cv_id": cv['id'],
-                    "error": str(e),
-                    "raw": criteria_response.content,
-                    "rating": "Unknown"
-                }
-
-        return criteria_evaluations
-
-    async def analyze(self, cv_list: List[Dict[str, Any]], job_ad: str, detailed_criteria: str) -> PipelineResult:
-        """Perform decomposed analysis with algorithmic aggregation."""
-
-        rankings = []
-        all_criteria_evals = {}
-
-        for cv in cv_list:
-            # Layer 1: Evaluate each criteria (3 API calls)
-            criteria_evaluations = await self._evaluate_criteria(cv, job_ad, detailed_criteria)
-
-            # Layer 2: Algorithmic aggregation (no API call)
-            final_ranking, reasoning = self._aggregate_scores(criteria_evaluations)
-
-            # Extract name from CV content
-            cv_content = cv.get("content", "")
-            name = "Unknown"
-            if cv_content:
-                first_line = cv_content.split('\n')[0].strip()
-                name = first_line.replace('#', '').replace('_', '').strip()
-
-            ranking_result = RankingResult(
-                cv_id=cv['id'],
-                name=name,
-                ranking=final_ranking,
-                reasoning=reasoning
-            )
-            rankings.append(ranking_result)
-            all_criteria_evals[cv['id']] = criteria_evaluations
-
-        analysis = {
-            "note": "Criteria evaluated via LLM (3 API calls per CV), aggregated algorithmically (simple average)",
-            "total_cvs": len(cv_list),
-            "criteria_evaluations": all_criteria_evals,
-            "aggregation_method": "Simple average of criteria scores (no weights)"
-        }
-
-        return PipelineResult(
-            pipeline_name=self.name,
-            provider=self.llm_provider.get_provider_name(),
-            model=self.llm_provider.model,
-            rankings=rankings,
-            analysis=analysis,
-            metadata={
-                "usage": {"note": "Token usage not tracked per individual CV call"},
-            }
-        )
-
     def _extract_criteria_section(self, detailed_criteria: str, criteria_name: str) -> str:
         """Extract the relevant section from detailed criteria."""
         lines = detailed_criteria.split('\n')
@@ -191,3 +82,128 @@ Provide your evaluation in JSON format:
             return '\n'.join(lines[start_idx:end_idx])
 
         return detailed_criteria  # Fallback to full criteria
+
+    async def _evaluate_single_criteria(self, cv: Dict[str, Any], job_ad: str,
+                                         criteria_name: str, criteria_key: str,
+                                         criteria_section: str, max_retries: int = 2) -> Dict[str, Any]:
+        """Evaluate a single criterion with retry logic."""
+        prompt = f"""You are a recruiter. Evaluate this candidate against the "{criteria_name}" criteria.
+
+Job Description:
+{job_ad}
+
+Criteria Details:
+{criteria_section}
+
+Candidate CV:
+{cv['content']}
+
+Evaluate their fit to this specific criteria and rate as: Excellent, Good, Weak, or Not a Fit.
+
+Provide your evaluation in JSON format:
+{{
+    "cv_id": "{cv['id']}",
+    "rating": "Excellent/Good/Weak/Not a Fit",
+}}"""
+
+        attempts = 0
+        response = None
+        while attempts <= max_retries:
+            if attempts > 0:
+                await asyncio.sleep(0.5)
+
+            response = await self.llm_provider.generate(prompt)
+
+            try:
+                parsed = self.extract_json_from_response(response.content)
+                if parsed and "rating" in parsed:
+                    return {
+                        "cv_id": cv['id'],
+                        "rating": parsed.get("rating", "Unknown"),
+                        "evidence": parsed.get("evidence", "")
+                    }
+            except Exception:
+                pass
+
+            attempts += 1
+
+        # Return error result after all retries
+        return {
+            "cv_id": cv['id'],
+            "error": "Failed to parse after retries",
+            "raw": response.content if response else "",
+            "rating": "Unknown"
+        }
+
+    async def _analyze_single_cv(self, cv: Dict[str, Any], job_ad: str, detailed_criteria: str, max_retries: int = 2) -> tuple:
+        """Analyze a single CV with decomposed criteria evaluation and algorithmic aggregation."""
+        # Apply blind mode if enabled
+        cv = self.prepare_cv(cv)
+
+        # Layer 1: Evaluate each criteria separately in PARALLEL
+        criteria_list = [
+            ("Zero-to-One Operator", "zero_to_one"),
+            ("Technical T-Shape", "technical_t_shape"),
+            ("Recruitment Mastery", "recruitment_mastery")
+        ]
+
+        # Create tasks for parallel criteria evaluation
+        criteria_tasks = []
+        for criteria_name, criteria_key in criteria_list:
+            criteria_section = self._extract_criteria_section(detailed_criteria, criteria_name)
+            task = self._evaluate_single_criteria(cv, job_ad, criteria_name, criteria_key, criteria_section, max_retries)
+            criteria_tasks.append((criteria_key, task))
+
+        # Run all criteria evaluations in parallel
+        results = await asyncio.gather(*[task for _, task in criteria_tasks])
+        criteria_evaluations = {criteria_tasks[i][0]: results[i] for i in range(len(results))}
+
+        # Layer 2: Algorithmic aggregation (no API call)
+        final_ranking, reasoning = self._aggregate_scores(criteria_evaluations)
+
+        # Extract name from CV content
+        name = self.extract_name_from_cv(cv.get("content", ""))
+        if self.blind_mode:
+            name = "[BLIND]"
+
+        ranking_result = RankingResult(
+            cv_id=cv['id'],
+            name=name,
+            ranking=final_ranking,
+            reasoning=reasoning
+        )
+
+        return ranking_result, criteria_evaluations
+
+    async def analyze(self, cv_list: List[Dict[str, Any]], job_ad: str, detailed_criteria: str) -> PipelineResult:
+        """Perform decomposed analysis with algorithmic aggregation - CVs processed in parallel."""
+
+        # Process each CV independently in PARALLEL
+        tasks = [self._analyze_single_cv(cv, job_ad, detailed_criteria) for cv in cv_list]
+        results = await asyncio.gather(*tasks)
+
+        rankings = []
+        all_criteria_evals = {}
+
+        for ranking_result, criteria_evaluations in results:
+            rankings.append(ranking_result)
+            all_criteria_evals[ranking_result.cv_id] = criteria_evaluations
+
+        analysis = {
+            "note": "Criteria evaluated via LLM (3 API calls per CV in parallel), aggregated algorithmically (simple average)",
+            "total_cvs": len(cv_list),
+            "blind_mode": self.blind_mode,
+            "criteria_evaluations": all_criteria_evals,
+            "aggregation_method": "Simple average of criteria scores (no weights)"
+        }
+
+        return PipelineResult(
+            pipeline_name=self.name,
+            provider=self.llm_provider.get_provider_name(),
+            model=self.llm_provider.model,
+            rankings=rankings,
+            analysis=analysis,
+            metadata={
+                "usage": {"note": "Token usage not tracked per individual CV call"},
+            }
+        )

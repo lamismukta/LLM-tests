@@ -13,7 +13,7 @@ class ChainOfThoughtPipeline(Pipeline):
     
     async def _analyze_single_cv(self, cv: Dict[str, Any], job_ad: str, detailed_criteria: str) -> RankingResult:
         """Analyze a single CV independently with chain-of-thought."""
-        prompt = f"""You are evaluating a candidate for a Founding Operator role using a step-by-step chain-of-thought approach.
+        prompt = f"""You are a recruiter evaluating a candidate for a Founding Operator role.  
 
 Job Description:
 {job_ad}
@@ -48,12 +48,6 @@ Step 4: Synthesize overall fit
 After completing your step-by-step analysis, provide your final ranking in JSON format:
 {{
     "cv_id": "{cv['id']}",
-    "step_by_step_analysis": {{
-        "zero_to_one": "Excellent/Good/Weak/Not a Fit - reasoning",
-        "technical_t_shape": "Excellent/Good/Weak/Not a Fit - reasoning",
-        "recruitment_mastery": "Excellent/Good/Weak/Not a Fit - reasoning",
-        "synthesis": "Overall reasoning"
-    }},
     "ranking": 4
 }}"""
 
@@ -99,16 +93,8 @@ After completing your step-by-step analysis, provide your final ranking in JSON 
                 else:
                     ranking = 0
                 
-                reasoning_raw = parsed.get("reasoning", "")
+                reasoning = parsed.get("reasoning", "")
                 step_analysis = parsed.get("step_by_step_analysis", {})
-                
-                # Handle reasoning if it's a dict (convert to string)
-                if isinstance(reasoning_raw, dict):
-                    reasoning = json.dumps(reasoning_raw, indent=2)
-                elif isinstance(reasoning_raw, (list, tuple)):
-                    reasoning = "\n".join(str(item) for item in reasoning_raw)
-                else:
-                    reasoning = str(reasoning_raw) if reasoning_raw else ""
             else:
                 ranking = 0
                 reasoning = response.content

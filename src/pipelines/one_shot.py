@@ -13,23 +13,23 @@ class OneShotPipeline(Pipeline):
     
     async def _analyze_single_cv(self, cv: Dict[str, Any], job_ad: str, detailed_criteria: str) -> RankingResult:
         """Analyze a single CV independently."""
-        prompt = f"""You are evaluating a candidate for a Founding Operator role. 
+        prompt = f"""You are a recruiter evaluating a candidate for a Founding Operator role. 
 
 Job Description:
 {job_ad}
-
-Detailed Hiring Criteria:
-{detailed_criteria}
 
 You will be evaluating this candidate against three key criteria:
 1. Zero-to-One Operator
 2. Technical T-Shape  
 3. Recruitment Mastery
 
+Detailed Hiring Criteria:
+{detailed_criteria}
+
 Candidate CV:
 {cv['content']}
 
-Provide a fit rating from 1-4:
+Provide a fit rating from 1-4 of the candidate for the role:
 - 4 = Excellent fit
 - 3 = Good fit
 - 2 = Borderline fit
@@ -92,14 +92,7 @@ Provide your response in JSON format:
                     if isinstance(result, dict) and "ranking" in result:
                         ranking = result["ranking"] if isinstance(result["ranking"], int) else 0
                 
-                reasoning_raw = parsed.get("reasoning", "")
-                # Handle reasoning if it's a dict (convert to string)
-                if isinstance(reasoning_raw, dict):
-                    reasoning = json.dumps(reasoning_raw, indent=2)
-                elif isinstance(reasoning_raw, (list, tuple)):
-                    reasoning = "\n".join(str(item) for item in reasoning_raw)
-                else:
-                    reasoning = str(reasoning_raw) if reasoning_raw else ""
+                reasoning = parsed.get("reasoning", "")
             else:
                 # If parsed is not a dict, try to extract ranking from text
                 ranking = 0

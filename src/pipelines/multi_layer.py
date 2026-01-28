@@ -27,7 +27,7 @@ class MultiLayerPipeline(Pipeline):
             # Extract relevant section from detailed_criteria
             criteria_section = self._extract_criteria_section(detailed_criteria, criteria_name)
             
-            criteria_prompt = f"""Evaluate this candidate against the "{criteria_name}" criteria.
+            criteria_prompt = f"""You are a recruiter. Evaluate this candidate against the "{criteria_name}" criteria.
 
 Job Description:
 {job_ad}
@@ -76,11 +76,7 @@ Job Description:
 Individual Criteria Evaluations:
 {json.dumps(criteria_evaluations, indent=2)}
 
-Synthesize the three criteria evaluations into an overall fit rating:
-- 4 = Excellent fit (meets all criteria at excellent level)
-- 3 = Good fit (meets criteria at good level)
-- 2 = Borderline fit (meets some criteria but has gaps)
-- 1 = Not a fit (does not meet key criteria)
+Synthesize the three criteria evaluations into an overall fit rating for the role.
 
 Provide your final ranking in JSON format:
 {{
@@ -135,16 +131,8 @@ Provide your final ranking in JSON format:
                 else:
                     ranking = 0
                 
-                reasoning_raw = parsed.get("reasoning", "")
+                reasoning = parsed.get("reasoning", "")
                 criteria_eval_summary = parsed.get("criteria_evaluations", {})
-                
-                # Handle reasoning if it's a dict (convert to string)
-                if isinstance(reasoning_raw, dict):
-                    reasoning = json.dumps(reasoning_raw, indent=2)
-                elif isinstance(reasoning_raw, (list, tuple)):
-                    reasoning = "\n".join(str(item) for item in reasoning_raw)
-                else:
-                    reasoning = str(reasoning_raw) if reasoning_raw else ""
             else:
                 ranking = 0
                 reasoning = synthesis_response.content
